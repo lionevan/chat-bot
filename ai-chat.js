@@ -11,7 +11,7 @@
   // הדבק כאן את ה-URL שקיבלת מ-Deploy -> Web app ב-Apps Script
   const BACKEND_URL = "https://script.google.com/macros/s/AKfycbyhbKROZqSIWt3uIiTArumCg2LbOhZwYKuW7ejY5qDiYfB7MD0wQ2d5i31_IJ4UtFtr/exec";
 
-  const WELCOME_MSG = "שלום! אני העוזר הדיגיטלי של טברנה יאסו רודוס. אפשר לשאול אותי כל שאלה על המסעדה, השעות, ההזמנות, התפריט ועוד.";
+  const WELCOME_MSG = "שלום! 👋 אני העוזר הדיגיטלי של טברנה יאסו רודוס. אפשר לשאול אותי כל שאלה על המסעדה, השעות, ההזמנות, התפריט ועוד.";
   const ERROR_MSG = "מצטערים, הייתה בעיה בחיבור. אפשר לנסות שוב או ליצור קשר ישירות דרך עמוד 'צור קשר'.";
 
   /* ---------- 2. עיצוב (זהה לבוט הפשוט, כדי לשמור על עקביות) ---------- */
@@ -180,22 +180,13 @@
     setTyping(true);
 
     try {
-      // שימוש ב-text/plain כדי למנוע בקשת preflight (OPTIONS) שגוגל אפפ סקריפט לא מטפל בה טוב
-      const res = await fetch(BACKEND_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ message: text, history: history })
-      });
-      const data = await res.json();
+      const reply = await jsonpRequest(text, history);
 
       setTyping(false);
-      addBubble(data.reply || ERROR_MSG, "bot");
+      addBubble(reply || ERROR_MSG, "bot");
 
-      // עדכון היסטוריה לצורך המשך שיחה טבעי
       history.push({ role: "user", content: text });
-      history.push({ role: "assistant", content: data.reply || "" });
-
-      // מגבילים את אורך ההיסטוריה כדי לא לשלוח יותר מדי טוקנים
+      history.push({ role: "assistant", content: reply || "" });
       if (history.length > 12) history = history.slice(-12);
 
     } catch (err) {
@@ -205,6 +196,42 @@
 
     waiting = false;
     sendBtn.disabled = false;
+  }
+
+  // שולח בקשה בשיטת JSONP (תג <script>) כדי לעקוף לגמרי הגבלות CORS של Apps Script
+  function jsonpRequest(message, historyArr) {
+    return new Promise((resolve, reject) => {
+      const callbackName = "ytbAiCb_" + Date.now();
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("timeout"));
+      }, 20000);
+
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      window[callbackName] = function (data) {
+        cleanup();
+        resolve(data && data.reply);
+      };
+
+      const params = new URLSearchParams({
+        message: message,
+        history: JSON.stringify(historyArr),
+        callback: callbackName
+      });
+
+      const script = document.createElement("script");
+      script.src = BACKEND_URL + "?" + params.toString();
+      script.onerror = () => {
+        cleanup();
+        reject(new Error("script load error"));
+      };
+      document.body.appendChild(script);
+    });
   }
 
   sendBtn.onclick = () => sendMessage(input.value);
